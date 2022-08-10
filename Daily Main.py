@@ -6,13 +6,15 @@ import csv
 import requests
 from progress.bar import Bar   #ONLY FOR VISUAL
 
-
-W  = '\033[0m'  # white (normal)
-R  = '\033[1;31m' # Red
-G  = '\033[1;32m' # Green
-C  = '\033[1;36m' # Cyan
-P  = '\033[1;35m' # Purple
-B  = '\033[0;36m' # Blue
+W  = '\033[0m'   
+R  = '\033[1;31m'
+DR = '\033[0;31m'
+G  = '\033[1;32m'
+DG = '\033[0;32m'
+C  = '\033[1;36m'
+V  = '\033[0;35m'
+P  = '\033[1;35m' 
+B  = '\033[0;36m'
 
 print ()
 print (C+">>> API Importation..."+W)
@@ -50,7 +52,7 @@ try :
             print(B+filename + " created"+W)
     
     end_time = time.time()
-    total_time = round((end_time - start_time), 1)
+    total_time = round((end_time - current_time), 1)
     time_string = ''
     if total_time > 60:
         minute = 0
@@ -60,12 +62,11 @@ try :
         time_string += str(minute) + " mn "
     time_string += str(round(total_time)) + " sec"
 
-    print(P+"API Downloaded in " + time_string+W)  
+    print(V+"API Downloaded in " + time_string+W)  
     
     print()
     print(C+'>>> Completing DataBase...'+W)
     
-    start_time = time.time()
     current_time = time.time()
     connection = sql.connect("db/CompleteDataBase.db")
     cursor = connection.cursor()
@@ -89,7 +90,7 @@ try :
         if file.is_file():
             count += 1
     
-    bar = Bar('Processing', max=count)
+    bar = Bar(B + 'Processing', max=count)
     to_print = ""
     
     for file in os.scandir('json'):
@@ -162,30 +163,42 @@ try :
                 csvname = "csv\\" + forecast_type + "_" + site + "_" + Run + "_" + Parameter + ".csv"
                 with open(csvname, mode='w', newline='') as f:
                     w = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-                    titles=["Site","PullDate","ValidTime","Mean","Min","Max"]
+                    titles=["Site","PullDate","ValidDate","ValidHoure","Mean","Min","Max"]
                     for model in range(0,model_number):
                         string="model"+str(model+1)
                         titles+=[string]  
+                    titles.append('average')
                     w.writerow(titles)
                     for rec in forecastData:
                         fc = rec["Forecast"]
                         valueList = str(fc[Parameter]["MemberValue"]).split(",")
-                        toWrite = [site,Run,fc["ValidTime"],
+                        toWrite = [site,Run,fc["ValidTime"].split('T')[0],fc["ValidTime"].split('T')[1].replace('Z',''),
                         str(fc[Parameter]["MeanValue"]),
                         str(fc[Parameter]["MinValue"]),
                         str(fc[Parameter]["MaxValue"])]
                         for value in valueList:
                             toWrite+=[value]
+                        average = 0
+                        divider = 0
+                        for value in valueList:
+                            if value != 'None' and value != '':
+                                average += float(value)
+                                divider += 1
+                        if divider != 0:
+                            toWrite.append(str(round(average/divider, 1)))
+                        else:
+                            toWrite.append('None')
+                        
                         w.writerow(toWrite)
                     f.close()
             connection.commit()
         bar.next()
+    bar.finish()
     
-    print()
     print(to_print)
             
     end_time = time.time()
-    total_time = round((end_time - start_time), 1)
+    total_time = round((end_time - current_time), 1)
     time_string = ''
     if total_time > 60:
         minute = 0
@@ -195,12 +208,11 @@ try :
         time_string += str(minute) + " mn "
     time_string += str(round(total_time)) + " sec"
 
-    print(P+"Data imported in " + time_string+W)  
+    print(V+"Data imported in " + time_string+W)  
 
     print()
     print(C+'>>> Updating Max/Min...'+W)
     
-    start_time = time.time()
     current_time = time.time()
 
     ModelNumber = 50
@@ -240,7 +252,7 @@ try :
                                """, (ForecastType, ForecastType))
                 result = cursor.fetchall()
             
-            if Site == 'BroomsBarn':
+            elif Site == 'BroomsBarn':
                 MetaData = {'SiteName': Site, 
                             'ForecastType': ForecastType, 
                             "RequestedLatitude": "51.2605",
@@ -259,7 +271,7 @@ try :
                                 INNER JOIN
                                 (SELECT Forecast_type, Pull_date, Valid_date, Model_id, MAX(Maximum_temp) as Max_Temp FROM Forecasts JOIN Model_forecasts
                                 ON Model_forecasts.Forecast_id = Forecasts.Forecast_id
-                                WHERE Site_id = 2
+                                WHERE Site_id = 1
                                 AND Forecast_type = ?
                                 AND (Valid_hour >= 9) AND (Valid_hour <= 21)
                                 GROUP BY Forecast_type, Pull_date, Valid_date, Model_id) mint
@@ -269,7 +281,7 @@ try :
                                 AND maxt.Model_id = mint.Model_id
                                """, (ForecastType, ForecastType))
                 result = cursor.fetchall()
-            
+                
             for row in result:
                 if Maxdata == []:
                     Maxdata.append({'PullDate': row[0], 'Forecasts': []})
@@ -323,13 +335,20 @@ try :
                 for model in range(0,ModelNumber):
                     string="model"+str(model+1)
                     titles+=[string]  
+                titles.append('average')
                 w.writerow(titles)
                 for pulldate in Maxdata:
                     for forecast in pulldate['Forecasts']: 
                         values = forecast['Values'].split(',')
                         towrite = [Site, pulldate['PullDate'], forecast['ValidDate']]
+                        average = 0
+                        divider = 0
                         for value in values:
                             towrite.append(value)
+                            if value != 'None':
+                                average += float(value)
+                                divider += 1
+                        towrite.append(str(round(average/divider, 1)))
                         w.writerow(towrite)
                 f.close()
             
@@ -340,17 +359,37 @@ try :
                 for model in range(0,ModelNumber):
                     string="model"+str(model+1)
                     titles+=[string]  
+                titles.append('average')
                 w.writerow(titles)
                 for pulldate in Mindata:
                     for forecast in pulldate['Forecasts']: 
                         values = forecast['Values'].split(',')
                         towrite = [Site, pulldate['PullDate'], forecast['ValidDate']]
+                        average = 0
+                        divider = 0
                         for value in values:
                             towrite.append(value)
+                            if value != 'None':
+                                average += float(value)
+                                divider += 1
+                        towrite.append(str(round(average/divider, 1)))
                         w.writerow(towrite)
                 f.close()
 
     end_time = time.time()
+    total_time = round((end_time - current_time), 1)
+    time_string = ''
+    if total_time > 60:
+        minute = 0
+        while total_time > 60:
+            minute += 1
+            total_time -= 60
+        time_string += str(minute) + " mn "
+    time_string += str(round(total_time)) + " sec"
+
+    print(V+"Max/Min updated in " + time_string+W)  
+    print()
+    
     total_time = round((end_time - start_time), 1)
     time_string = ''
     if total_time > 60:
@@ -361,7 +400,7 @@ try :
         time_string += str(minute) + " mn "
     time_string += str(round(total_time)) + " sec"
 
-    print(P+"Max/Min updated in " + time_string+W)  
+    print(P+"Process ended in " + time_string+W)  
             
 except Exception as e:
     print (R, "[ERROR]", e, W)
