@@ -52,8 +52,8 @@ def insert_forecast_model_values(conn, forecast_id, variable, values):
         sql = "insert into forecast_model_values (forecast_id, variable, value, model) values (?,?,?,?)"
         parameters = []
         for model, value in enumerate(values.split(","), start=1):
-            if value == "":
-                value = 0
+            #if value == "" and variable in ('rainfall','PAR'):
+            #    value = 0
             parameters.append((forecast_id, variable, value, model))
         
         cur = conn.cursor()
@@ -70,7 +70,7 @@ def insert_forecast_model_values(conn, forecast_id, variable, values):
         #conn.commit()
 
 def main():
-    conn = create_connection(r"N:\BBRO\Weatherquest\WeatherQuestDB.db")
+    conn = create_connection(r"D:\work\Rothamsted-Ecoinformatics\daily_weather\db\WeatherQuestDB.db")
 
     # model run id = the model run date expressed as an int of YYYYMMDD 
     model_runs_sql = """CREATE TABLE IF NOT EXISTS model_runs (
@@ -109,23 +109,23 @@ def main():
     folders = {
         "folder_list": [
             {"name":"CW28", "site":"Cranwell", "model_type": "28", "night":['21', '00', '03', '06']},
-            {"name":"BB28", "site":"Cranwell", "model_type": "28", "night":['00', '03', '06', '09']},
+            {"name":"BB28", "site":"Brooms Barn", "model_type": "28", "night":['00', '03', '06', '09']},
             {"name":"CW10", "site":"Cranwell", "model_type": "10", "night":['21', '00', '03', '06']},
             {"name":"BB10", "site":"Brooms Barn", "model_type": "10", "night":['00', '03', '06', '09']}
         ]}
     
     for folder in folders["folder_list"]:
         folder_name = folder["name"]
-        print("processing folder {0}".format(folder_name))
         site  = folder["site"]
         model_type = folder["model_type"]
         night = folder["night"]
-
+        print("processing folder {0}".format(folder_name))
+        print(model_type)
         for filename in os.listdir("N:\BBRO\Weatherquest\daily\json\\" + folder_name):
             # dataset = json.load(file) # Need to refactor this to below code as powerautomate files include a byte order mark symbol. 
             # Using utf-8-sig does remove this for strings, but still have a problem if loading json directly from file
             file = open(os.path.join("N:\BBRO\Weatherquest\daily\json\\" + folder_name,filename),encoding="utf-8-sig") #
-            print("processing file {0}".format(filename))
+            #print("processing file {0}".format(filename))
             # dataset = json.load(file) # Doesn't work with BOM
             file_content = file.read()
             dataset = json.loads(file_content)
@@ -156,10 +156,12 @@ def main():
             # 2. Need to flag the forecast day 
             # 3. Need to flag the forecast day period (day or night)
             nof_records = len(data)
-            print("nof_records = {0}".format(nof_records))
             for idx, forecast in enumerate(data):
                 include = 1
+                #if site == "Cranwell" and (idx < 7 or idx == nof_records-1): # Applied rule to both sites based on feedback from AM, 23/02/2023
                 if model_type == "10" and (idx < 7 or idx == nof_records-1):
+                    include = 0
+                elif model_type == "28" and (idx < 4 or idx == nof_records-1):
                     include = 0
                 
                 forecast_date = forecast["Forecast"]["ValidTime"].split('T')[0]
