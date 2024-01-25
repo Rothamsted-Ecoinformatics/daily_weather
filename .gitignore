@@ -1,3 +1,9 @@
 
 *.json
 *.db
+db/Brooms Barn 10 day.csv
+db/Brooms Barn 28 day.csv
+db/Cranwell 10 day.csv
+db/Cranwell 28 day.csv
+db/WeatherQuestDB.sqbpro
+query min temp.sql
