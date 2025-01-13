@@ -1,111 +1,26 @@
 import os
 import json
-import sqlite3
-from datetime import datetime, timedelta
+import contextlib
 import pandas as pd
+import sqlalchemy as sa
+from datetime import datetime, timedelta
+from configparser import ConfigParser
 
-def create_connection(db_file):
-    """ create a database connection to a SQLite database """
-    os.remove(db_file)    
-    conn = None
+cfg = ConfigParser()
+cfg.read('config.ini')
+
+@contextlib.contextmanager
+def get_forecast_data_con():
+    print(cfg.get('FORECAST_DATA','database'))
+    
+    con = sa.create_engine("postgresql+psycopg2://{0}:{1}@{2}:{3}/{4}".format(cfg.get('FORECAST_DATA','username'),cfg.get('FORECAST_DATA','password'),cfg.get('FORECAST_DATA','host'),cfg.get('FORECAST_DATA','port'),cfg.get('FORECAST_DATA','database')))
+
     try:
-        conn = sqlite3.connect(db_file)
-        return conn
-    except Error as e:
-        print(e)
-
-    return conn
-
-def create_table(conn, create_table_sql):
-    """ create a table from the create_table_sql statement
-    :param conn: Connection object
-    :param create_table_sql: a CREATE TABLE statement
-    :return:
-    """
-    try:
-        c = conn.cursor()
-        c.execute(create_table_sql)
-    except Error as e:
-        print(e)
-
-def insert_model_run(conn, params):
-    sql = "insert into model_runs (node_number, model_run_date, model_type, site, model_run_day) values (?,?,?,?,?)"
-    cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode = OFF")
-    cur.execute("PRAGMA locking_mode = EXCLUSIVE")
-    cur.execute(sql, params)
-    #conn.commit()
-    return cur.lastrowid
-
-def insert_forecasts(conn, params):
-    sql = "insert into forecasts (model_run_id, forecast_date, forecast_day, day_period, forecast_hour, include) values (?,?,?,?,?,?)"
-    cur = conn.cursor()
-    # want to set some prgamas to improve insert performance
-    cur.execute("PRAGMA journal_mode = OFF")
-    cur.execute("PRAGMA locking_mode = EXCLUSIVE")
-    cur.execute(sql, params)
-    #conn.commit()
-    return cur.lastrowid
-
-def insert_forecast_model_values(conn, forecast_id, variable, values):
-    if values:
-        sql = "insert into forecast_model_values (forecast_id, variable, value, model) values (?,?,?,?)"
-        parameters = []
-        for model, value in enumerate(values.split(","), start=1):
-            #if value == "" and variable in ('rainfall','PAR'):
-            #    value = 0
-            parameters.append((forecast_id, variable, value, model))
-        
-        cur = conn.cursor()
-        # want to set some prgamas to improve insert performance
-        cur.execute("PRAGMA journal_mode = OFF")
-        cur.execute("PRAGMA locking_mode = EXCLUSIVE")
-        cur.executemany(sql, parameters)
-
-        # this is very slow - using executemany above is much faster    
-        #df = pd.DataFrame(columns = ["forecast_id", "variable", "value","model"])
-        #for model, value in enumerate(values.split(","), start=1):
-        #    df = df.append({'forecast_id':forecast_id, 'variable':variable, 'value': value, 'model': model}, ignore_index=True)
-        #df.to_sql("forecast_model_values", conn, if_exists="append", index=False, method="multi")
-        #conn.commit()
+        yield con
+    finally:
+        con.dispose()
 
 def main():
-    conn = create_connection(r"D:\work\Rothamsted-Ecoinformatics\daily_weather\db\WeatherQuestDB.db")
-
-    # model run id = the model run date expressed as an int of YYYYMMDD 
-    model_runs_sql = """CREATE TABLE IF NOT EXISTS model_runs (
-                        id integer PRIMARY KEY,
-                        node_number integer,
-                        model_run_date text,
-                        model_type integer,
-                        model_run_day text,
-                        site text
-                    ); """
-
-    # forecast id =  the model run date, forecast date and hour expressed as an int of YYYYMMDDYYMMDDHH
-    forecasts_sql = """CREATE TABLE IF NOT EXISTS forecasts (
-                        id integer PRIMARY KEY,
-                        model_run_id integer,
-                        forecast_date text,
-                        forecast_day text,
-                        day_period text,
-                        forecast_hour text,
-                        include integer
-                    ); """
-
-    forecast_model_values_sql = """CREATE TABLE IF NOT EXISTS forecast_model_values (
-                        id integer PRIMARY KEY,
-                        forecast_id integer,
-                        variable text,
-                        value real,
-                        model integer
-                    ); """
-
-
-    create_table(conn, model_runs_sql)
-    create_table(conn, forecasts_sql)
-    create_table(conn, forecast_model_values_sql)
-
     folders = {
         "folder_list": [
             {"name":"CW28", "site":"Cranwell", "model_type": "28", "night":['21', '00', '03', '06']},
@@ -113,78 +28,162 @@ def main():
             {"name":"CW10", "site":"Cranwell", "model_type": "10", "night":['21', '00', '03', '06']},
             {"name":"BB10", "site":"Brooms Barn", "model_type": "10", "night":['00', '03', '06', '09']}
         ]}
-    
-    for folder in folders["folder_list"]:
-        folder_name = folder["name"]
-        site  = folder["site"]
-        model_type = folder["model_type"]
-        night = folder["night"]
-        print("processing folder {0}".format(folder_name))
-        print(model_type)
-        for filename in os.listdir("N:\BBRO\Weatherquest\daily\json\\" + folder_name):
-            # dataset = json.load(file) # Need to refactor this to below code as powerautomate files include a byte order mark symbol. 
-            # Using utf-8-sig does remove this for strings, but still have a problem if loading json directly from file
-            file = open(os.path.join("N:\BBRO\Weatherquest\daily\json\\" + folder_name,filename),encoding="utf-8-sig") #
-            #print("processing file {0}".format(filename))
-            # dataset = json.load(file) # Doesn't work with BOM
-            file_content = file.read()
-            dataset = json.loads(file_content)
 
-            metadata = dataset["MetaData"]
-            node_number = ""
-            if "NodeNumber" in metadata:
-                node_number = metadata[0]["NodeNumber"]
+    model_run_sql = "insert into forecast_data.model_runs (node_number, model_run_date, model_type, forecast_site, model_run_day) values ({0},'{1}',{2},'{3}','{4}')"
+    forecast_sql = "insert into forecast_data.forecasts (model_run_id, forecast_date, forecast_day, day_period, forecast_hour, to_include) values ({0},'{1}','{2}','{3}','{4}',{5})"
 
-            if model_type == "10":
-                model_run = metadata[0]["ModelRun"]
-                model_run_date = datetime.strptime(model_run,"%Y-%m-%d")
-                model_run_day = model_run_date.strftime('%A')[:3]
-            else:
-                model_run = metadata[0]["LastUpdated"].split(' ')[0]
-                if "Model" in metadata:
-                    model_run_day = metadata[0]["Model"]
-                else: # For when model is missing because from earlier data files.
-                    model_run_date = datetime.strptime(model_run,"%Y-%m-%d")
-                    model_run_day = model_run_date.strftime('%A')[:3] 
+    with get_forecast_data_con() as conn:
+        try:
+            #cur = conn.cursor()
+            
+            for folder in folders["folder_list"]:
+                folder_name = folder["name"]
+                site  = folder["site"]
+                model_type = folder["model_type"]
+                night = folder["night"]
+                print("processing folder {0}".format(folder_name))
+                print(model_type)
+                for filename in os.listdir("N:\BBRO\Weatherquest\daily\json\\" + folder_name):
+                    # dataset = json.load(file) # Need to refactor this to below code as powerautomate files include a byte order mark symbol. 
+                    # Using utf-8-sig does remove this for strings, but still have a problem if loading json directly from file
+                    file = open(os.path.join("N:\BBRO\Weatherquest\daily\json\\" + folder_name,filename),encoding="utf-8-sig") #
+                    # dataset = json.load(file) # Doesn't work with BOM
+                    file_content = file.read()
+                    dataset = json.loads(file_content)
 
-            # add the model run to the database
-            model_run_id = insert_model_run(conn, (node_number, model_run, model_type, site, model_run_day))
+                    metadata = dataset["MetaData"]
+                    model_run_date = None
+                    node_number = 0 # dummy value
+                    if "NodeNumber" in metadata[0]:
+                        node_number = metadata[0]["NodeNumber"]
 
-            # add the forecasts
-            data = dataset["Data"]
-            # 1. Need a rule to flag forecasts for inclusion or not. The first 7 and last should be ignored
-            # 2. Need to flag the forecast day 
-            # 3. Need to flag the forecast day period (day or night)
-            nof_records = len(data)
-            for idx, forecast in enumerate(data):
-                include = 1
-                #if site == "Cranwell" and (idx < 7 or idx == nof_records-1): # Applied rule to both sites based on feedback from AM, 23/02/2023
-                if model_type == "10" and (idx < 7 or idx == nof_records-1):
-                    include = 0
-                elif model_type == "28" and (idx < 4 or idx == nof_records-1):
-                    include = 0
-                
-                forecast_date = forecast["Forecast"]["ValidTime"].split('T')[0]
-                
-                forecast_hour = forecast["Forecast"]["ValidTime"].split('T')[1].split(":")[0]
-                
-                forecast_day = forecast_date 
-                if site == "Cranwell" and forecast_hour == '21':
-                    forecast_day_date = datetime.strptime(forecast_date,"%Y-%m-%d")
-                    forecast_day_date = forecast_day_date + timedelta(days=1)     
-                    forecast_day = forecast_day_date.strftime("%Y-%m-%d")
+                    if model_type == "10":
+                        model_run = metadata[0]["ModelRun"]
+                        model_run_date = datetime.strptime(model_run,"%Y-%m-%d")
+                        model_run_day_inferred = model_run_date.strftime('%A')[:3]
+                        model_run_day_metadata_actual = None
+                        if "Model" in metadata[0]:
+                            model_run_day_inferred = metadata[0]["ModelRun"]
+                            
+                    else:
+                        model_run = metadata[0]["LastUpdated"].split(' ')[0]
+                        model_run_date = datetime.strptime(model_run,"%Y-%m-%d")
+                        model_run_day_inferred = model_run_date.strftime('%A')[:3] 
+                        model_run_day_metadata_actual = None
+                        if "Model" in metadata[0]: 
+                            model_run_day_metadata_actual = metadata[0]["Model"]
+                        
+                    df_temp = pd.io.sql.read_sql("select id from forecast_data.model_runs where model_run_date = '{0}' and model_type = {1} and forecast_site = '{2}'".format(model_run_date,model_type,site),conn)    
 
-                day_period = 'N' if forecast_hour in night else 'D'
+                    if not df_temp.empty:
+                        print("exists")
+                    else:
+                        print("new")    
+                        df_model_run = pd.DataFrame(columns=["node_number", "model_run_date", "model_type", "forecast_site", "model_run_day_inferred","model_run_day_metadata_actual","source_file"])
+                        df_model_run.loc[0] = [node_number, model_run_date, model_type, site, model_run_day_inferred,model_run_day_metadata_actual,filename]
+                        
+                        df_model_run.to_sql("model_runs", con=conn, if_exists='append', schema="forecast_data", index=False)
 
-                forecast_id = insert_forecasts(conn, (model_run_id, forecast_date, forecast_day, day_period, forecast_hour, include))
-                
-                # add the model data
-                insert_forecast_model_values(conn, forecast_id, "rainfall", forecast["Forecast"]["Rainfall"]["MemberValue"])
-                insert_forecast_model_values(conn, forecast_id, "PAR", forecast["Forecast"]["PAR"]["MemberValue"])
-                insert_forecast_model_values(conn, forecast_id, "avgtemp", forecast["Forecast"]["AverageTemperature"]["MemberValue"])
-                insert_forecast_model_values(conn, forecast_id, "maxtemp", forecast["Forecast"]["MaximumTemperature"]["MemberValue"])
-                insert_forecast_model_values(conn, forecast_id, "mintemp", forecast["Forecast"]["MinimumTemperature"]["MemberValue"])
-                conn.commit()
+                        df_temp = pd.io.sql.read_sql("select id from forecast_data.model_runs order by id desc limit 1", conn)
+                        
+                        model_run_id = df_temp["id"].iloc[0]
+                        
+                        # add the forecasts
+                        data = dataset["Data"]
+                        # 1. Need a rule to flag forecasts for inclusion or not. The first 7 and last should be ignored
+                        # This has changed because since April 2022 full days are now being pulled from the day before the actual date.
+                        # 2. Need to flag the forecast day 
+                        # 3. Need to flag the forecast day period (day or night)
+                        nof_records = len(data)
+                        for idx, forecast in enumerate(data):
+                            include = 1
+                            #if site == "Cranwell" and (idx < 7 or idx == nof_records-1): # Applied rule to both sites based on feedback from AM, 23/02/2023
+                            if model_type == "10" and (idx < 3 or idx == nof_records-1):
+                                include = 0
+                            elif model_type == "28" and (idx < 1 or idx == nof_records-1):
+                                include = 0
+                            
+                            forecast_date = forecast["Forecast"]["ValidTime"].split('T')[0]
+                            
+                            forecast_hour = forecast["Forecast"]["ValidTime"].split('T')[1].split(":")[0]
+                            
+                            forecast_day = forecast_date 
+                            if site == "Cranwell" and forecast_hour == '21':
+                                forecast_day_date = datetime.strptime(forecast_date,"%Y-%m-%d")
+                                forecast_day_date = forecast_day_date + timedelta(days=1)     
+                                forecast_day = forecast_day_date.strftime("%Y-%m-%d")
 
+                            day_period = 'N' if forecast_hour in night else 'D'
+                        
+                            df_forecast = pd.DataFrame(columns=["model_run_id", "forecast_date", "forecast_day", "day_period", "forecast_hour", "to_include"])
+                            df_forecast.loc[0] = [model_run_id, forecast_date, forecast_day, day_period, forecast_hour, include]
+                            
+                            df_forecast.to_sql("forecasts", con=conn, if_exists='append', schema="forecast_data", index=False)
+
+                            df_temp = pd.io.sql.read_sql("select id from forecast_data.forecasts order by id desc limit 1", conn)
+                            forecast_id = df_temp["id"].iloc[0]
+
+                            # add the model data
+                            df_load = pd.DataFrame(columns=["forecast_id", "variable", "value", "model"])
+                            for idx, value in enumerate(forecast["Forecast"]["Rainfall"]["MemberValue"].split(",")):
+                                model = idx+1
+                                if value == "":
+                                    value = None
+                                df_load.loc[idx] = [forecast_id, "Rainfall", value, model]
+                            df_load.to_sql("forecast_model_values", con=conn, if_exists='append', schema="forecast_data", index=False)
+
+                            memberValue = forecast["Forecast"]["PAR"]["MemberValue"]
+                            if not memberValue:
+                                memberValue = ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"
+
+                            for idx, value in enumerate(memberValue.split(",")):
+                                model = idx+1
+                                if value == "":
+                                    value = None
+                                df_load.loc[idx] = [forecast_id, "PAR", value, model]
+                            df_load.to_sql("forecast_model_values", con=conn, if_exists='append', schema="forecast_data", index=False)
+
+                            memberValue = forecast["Forecast"]["AverageTemperature"]["MemberValue"]
+                            if not memberValue:
+                                memberValue = ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"
+
+                            for idx, value in enumerate(memberValue.split(",")):
+                                model = idx+1
+                                if value == "":
+                                    value = None
+                                df_load.loc[idx] = [forecast_id, "avgtemp", value, model]
+                            df_load.to_sql("forecast_model_values", con=conn, if_exists='append', schema="forecast_data", index=False)
+
+                            memberValue = forecast["Forecast"]["MaximumTemperature"]["MemberValue"]
+                            if not memberValue:
+                                memberValue = ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"
+                            
+                            for idx, value in enumerate(memberValue.split(",")):
+                                model = idx+1
+                                if value == "":
+                                    value = None
+                                df_load.loc[idx] = [forecast_id, "maxtemp", value, model]
+                            df_load.to_sql("forecast_model_values", con=conn, if_exists='append', schema="forecast_data", index=False)
+
+                            memberValue = forecast["Forecast"]["MinimumTemperature"]["MemberValue"]
+                            if not memberValue:
+                                memberValue = ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,"
+
+                            for idx, value in enumerate(memberValue.split(",")):
+                                model = idx+1
+                                if value == "":
+                                    value = None
+                                df_load.loc[idx] = [forecast_id, "mintemp", value, model]                            
+                            df_load.to_sql("forecast_model_values", con=conn, if_exists='append', schema="forecast_data", index=False)
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            print(filename)
+            print(e.with_traceback())
+
+        finally:
+            # Close the cursor and connection
+            conn.dispose()
+      
 if __name__ == '__main__':
     main()

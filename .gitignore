@@ -7,3 +7,5 @@ db/Cranwell 10 day.csv
 db/Cranwell 28 day.csv
 db/WeatherQuestDB.sqbpro
 query min temp.sql
+*.ini
+*.csv
