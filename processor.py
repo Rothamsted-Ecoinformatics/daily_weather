@@ -33,9 +33,9 @@ def main():
     forecast_sql = "insert into forecast_data.forecasts (model_run_id, forecast_date, forecast_day, day_period, forecast_hour, to_include) values ({0},'{1}','{2}','{3}','{4}',{5})"
 
     with get_forecast_data_con() as conn:
+        # src_dir is the mapped location of the BBRO data on the e-RA Sharepoint. If you are not ostlerr you should update this!
+        src_dir = "C:/Users/ostlerr/Rothamsted Research/e-RA - Documents/BBROWeatherQuest/" 
         try:
-            #cur = conn.cursor()
-            
             for folder in folders["folder_list"]:
                 folder_name = folder["name"]
                 site  = folder["site"]
@@ -43,10 +43,12 @@ def main():
                 night = folder["night"]
                 print("processing folder {0}".format(folder_name))
                 print(model_type)
-                for filename in os.listdir("N:\BBRO\Weatherquest\daily\json\\" + folder_name):
+                #N 
+
+                for filename in os.listdir(src_dir + folder_name):
                     # dataset = json.load(file) # Need to refactor this to below code as powerautomate files include a byte order mark symbol. 
                     # Using utf-8-sig does remove this for strings, but still have a problem if loading json directly from file
-                    file = open(os.path.join("N:\BBRO\Weatherquest\daily\json\\" + folder_name,filename),encoding="utf-8-sig") #
+                    file = open(os.path.join(src_dir + folder_name,filename),encoding="utf-8-sig")
                     # dataset = json.load(file) # Doesn't work with BOM
                     file_content = file.read()
                     dataset = json.loads(file_content)
